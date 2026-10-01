@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Weather Forecast PWA</title>
+<meta name="description" content="Premium weather forecast PWA with hourly and 7-day forecasts, air quality, interactive weather maps, bilingual English/Bengali interface, offline support and data export." />
+<meta name="theme-color" content="#0ea5e9" />
+<meta name="color-scheme" content="light dark" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-title" content="Weather" />
+
+<link rel="manifest" href="./manifest.json" />
+<link rel="icon" type="image/svg+xml" href="./assets/icons/icon.svg" />
+<link rel="apple-touch-icon" href="./assets/icons/icon.svg" />
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<link rel="stylesheet" href="./assets/css/app.css" />
+
+<script>
+  (function () {
+    try {
+      var stored = localStorage.getItem('weather:theme');
+      var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+      var dark = stored ? stored === 'dark' : prefersDark;
+      if (dark) document.documentElement.classList.add('dark');
+      var lang = localStorage.getItem('weather:lang') || 'en';
+      document.documentElement.setAttribute('lang', lang);
+    } catch (e) {}
+  })();
+</script>
+
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    darkMode: 'class',
+    theme: {
+      extend: {
+        fontFamily: {
+          sans: ['Inter', 'Segoe UI', 'system-ui', '-apple-system', 'Noto Sans Bengali', 'sans-serif']
+        },
+        maxWidth: { content: '1400px' }
+      }
+    }
+  };
+</script>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+</head>
+
+<body class="min-h-screen antialiased">
+
+<a href="#dashboard" class="skip-link">Skip to weather content</a>
+
+<header id="site-header" class="site-header" role="banner">
+  <div class="mx-auto max-w-content px-3 sm:px-5">
+    <div class="flex items-center gap-3 py-3">
+      <a href="#top" class="flex items-center gap-2 shrink-0" aria-label="Weather Forecast PWA home">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="9" cy="8" r="3"></circle>
+            <path d="M9 2v1.5M3.5 8H2M4.8 3.8 3.7 2.7"></path>
+            <path d="M17.5 21H10a5.5 5.5 0 1 1 5.27-7.06h2.23a3.53 3.53 0 1 1 0 7.06Z"></path>
+          </svg>
+        </span>
+        <span class="hidden sm:block leading-tight">
+          <span class="block text-[15px] font-semibold tracking-tight" data-i18n="app.title">Weather Forecast</span>
+          <span class="block text-[11px] text-muted" data-i18n="app.tagline">Live forecast &amp; tools</span>
+        </span>
+      </a>
+
+      <div class="flex-1 min-w-0 relative" role="search">
+        <form id="search-form" class="search-shell" autocomplete="off">
+          <label for="search-input" class="sr-only" data-i18n="search.label">Search for a city or pincode</label>
+          <span class="search-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>
+          </span>
+          <input id="search-input" type="search" class="search-input" placeholder="Search city or pincode…" data-i18n-placeholder="search.placeholder" aria-autocomplete="list" aria-controls="search-suggestions" aria-expanded="false" enterkeyhint="search" />
+          <button type="button" id="search-clear" class="search-clear hidden" aria-label="Clear search" data-i18n-aria="search.clear">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"></path></svg>
+          </button>
+          <button type="button" id="voice-btn" class="search-mic" aria-label="Voice search" data-i18n-aria="search.voice" title="Voice search">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="11" rx="3"></rect><path d="M5 11a7 7 0 0 0 14 0M12 18v4M8 22h8"></path></svg>
+          </button>
+        </form>
+        <div id="search-suggestions" class="suggestions hidden" role="listbox" aria-label="Search suggestions"></div>
+      </div>
+
+      <div class="flex items-center gap-1.5 shrink-0">
+        <button type="button" id="locate-btn" class="icon-btn" title="Use my location" aria-label="Use my location" data-i18n-aria="search.useMyLocation">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s7-5.686 7-11a7 7 0 1 0-14 0c0 5.314 7 11 7 11Z"></path><circle cx="12" cy="10" r="2.5"></circle></svg>
+        </button>
+        <button type="button" id="lang-toggle" class="icon-btn lang-btn" title="Switch language" aria-label="Switch language">
+          <span id="lang-label">EN</span>
+        </button>
+        <button type="button" id="theme-toggle" class="icon-btn" title="Toggle theme" aria-label="Toggle dark mode" data-i18n-aria="theme.toggle">
+          <svg class="theme-icon-sun" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"></path></svg>
+          <svg class="theme-icon-moon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"></path></svg>
+        </button>
+        <button type="button" id="install-btn" class="install-btn hidden" data-i18n="action.install">Install</button>
+      </div>
+    </div>
+
+    <nav class="hidden md:flex items-center gap-1 pb-2 -mt-1 text-sm" aria-label="Sections">
+      <a class="nav-link" href="#top" data-i18n="nav.home">Home</a>
+      <a class="nav-link" href="#hourly-section" data-i18n="nav.hourly">Hourly</a>
+      <a class="nav-link" href="#daily-section" data-i18n="nav.forecast">7-Day</a>
+      <a class="nav-link" href="#aqi-section" data-i18n="nav.air">Air Quality</a>
+      <a class="nav-link" href="#map-section" data-i18n="nav.map">Map</a>
+      <a class="nav-link" href="#farmer-section" data-i18n="nav.farmer">Farmer</a>
+      <a class="nav-link" href="#export-section" data-i18n="nav.more">Export</a>
+    </nav>
+  </div>
+</header>
+
+<div id="offline-banner" class="banner banner-warning hidden" role="status">
+  <span data-i18n="status.offline">You're offline. Showing the latest saved weather data.</span>
+</div>
+
+<div id="install-banner" class="banner banner-info hidden" role="status">
+  <span data-i18n="install.prompt">Install Weather App — get faster access and offline weather.</span>
+  <span class="flex gap-2">
+    <button type="button" id="install-accept" class="btn btn-primary btn-xs" data-i18n="action.install">Install</button>
+    <button type="button" id="install-dismiss" class="btn btn-ghost btn-xs" data-i18n="action.dismiss">Dismiss</button>
+  </span>
+</div>
+
+<main id="top" class="mx-auto max-w-content px-3 sm:px-5 pb-28 md:pb-12">
+
+  <section id="loading-state" class="pt-4 space-y-4" aria-live="polite" aria-busy="true">
+    <div class="card p-5">
+      <div class="skeleton h-4 w-40 mb-4"></div>
+      <div class="skeleton h-14 w-32 mb-3"></div>
+      <div class="skeleton h-4 w-56"></div>
+    </div>
+    <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+      <div class="card h-24 skeleton-soft"></div>
+      <div class="card h-24 skeleton-soft"></div>
+      <div class="card h-24 skeleton-soft"></div>
+      <div class="card h-24 skeleton-soft"></div>
+    </div>
+    <div class="card h-40 skeleton-soft"></div>
+    <p class="sr-only" data-i18n="loading.weather">Loading weather data…</p>
+  </section>
+
+  <section id="error-state" class="hidden pt-6" role="alert">
+    <div class="card p-6 text-center max-w-lg mx-auto">
+      <div class="mx-auto mb-3 w-12 h-12 rounded-full grid place-items-center bg-danger-soft text-danger">
+        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M12 9v4M12 17h.01"></path><path d="M10.3 3.9 2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"></path></svg>
+      </div>
+      <h2 class="text-lg font-semibold mb-1" data-i18n="error.title">Weather service temporarily unavailable</h2>
+      <p id="error-message" class="text-sm text-muted mb-4"></p>
+      <button type="button" id="retry-btn" class="btn btn-primary" data-i18n="action.retry">Try again</button>
+    </div>
+  </section>
+
+  <div id="dashboard" class="hidden">
+
+    <section class="pt-4" aria-labelledby="hero-heading">
+      <h2 id="hero-heading" class="sr-only" data-i18n="section.current">Current weather</h2>
+      <div class="hero card overflow-hidden">
+        <div class="hero-inner">
+          <div class="flex flex-col lg:flex-row lg:items-center gap-5">
+            <div class="flex-1 min-w-0">
+              <div class="flex items-start gap-2 flex-wrap">
+                <div class="min-w-0">
+                  <p id="hero-location" class="text-2xl sm:text-3xl font-semibold tracking-tight truncate">—</p>
+                  <p id="hero-region" class="text-sm text-muted truncate">—</p>
+                </div>
+                <button type="button" id="fav-add-btn" class="icon-btn icon-btn-sm" title="Save location" aria-label="Save location" data-i18n-aria="search.addFavorite">
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9L12 3Z"></path></svg>
+                </button>
+              </div>
+
+              <div class="flex items-end gap-4 mt-4">
+                <div id="hero-icon" class="hero-icon" aria-hidden="true"></div>
+                <div>
+                  <p id="hero-temp" class="hero-temp">--°</p>
+                  <p id="hero-condition" class="text-base font-medium">—</p>
+                </div>
+              </div>
+
+              <p id="hero-feels" class="text-sm text-muted mt-2">—</p>
+            </div>
+
+            <div class="lg:text-right lg:min-w-[220px]">
+              <p id="hero-date" class="text-sm font-medium">—</p>
+              <p id="hero-time" class="text-2xl font-semibold tabular-nums">—</p>
+              <p class="text-xs text-muted mt-1"><span id="hero-updated">—</span></p>
+              <div class="flex lg:justify-end items-center gap-2 mt-3">
+                <span id="source-badge" class="chip">—</span>
+                <button type="button" id="refresh-btn" class="btn btn-ghost btn-sm">
+                  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.4"></path><path d="M21 3v6h-6"></path></svg>
+                  <span data-i18n="action.refresh">Refresh</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="mt-4" aria-labelledby="metrics-heading">
+      <h2 id="metrics-heading" class="section-title" data-i18n="section.metrics">Current conditions</h2>
+      <div id="metrics-grid" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3"></div>
+    </section>
+
+    <section id="aqi-section" class="mt-8" aria-labelledby="aqi-heading">
+      <h2 id="aqi-heading" class="section-title" data-i18n="section.airQuality">Air quality</h2>
+      <div id="aqi-content" class="card p-5"></div>
+    </section>
+
+    <section id="hourly-section" class="mt-8" aria-labelledby="hourly-heading">
+      <div class="flex items-center justify-between gap-3 mb-3">
+        <h2 id="hourly-heading" class="section-title mb-0" data-i18n="section.hourly">Next 24 hours</h2>
+        <div class="flex gap-1.5">
+          <button type="button" id="hourly-prev" class="icon-btn icon-btn-sm" aria-label="Scroll forecast left" data-i18n-aria="action.scrollLeft">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"></path></svg>
+          </button>
+          <button type="button" id="hourly-next" class="icon-btn icon-btn-sm" aria-label="Scroll forecast right" data-i18n-aria="action.scrollRight">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"></path></svg>
+          </button>
+        </div>
+      </div>
+      <div id="hourly-scroll" class="hourly-scroll" tabindex="0" role="list" aria-label="Hourly forecast"></div>
+    </section>
+
+    <section class="mt-8" aria-labelledby="charts-heading">
+      <h2 id="charts-heading" class="section-title" data-i18n="section.charts">Trends</h2>
+      <div class="grid gap-4 lg:grid-cols-2">
+        <div class="card p-4">
+          <h3 class="chart-title" data-i18n="charts.temperature24">Temperature — next 24 hours</h3>
+          <div class="chart-box"><canvas id="chart-temp-hourly" role="img" aria-label="Line chart of temperature over the next 24 hours"></canvas></div>
+        </div>
+        <div class="card p-4">
+          <h3 class="chart-title" data-i18n="charts.rain24">Rain probability — next 24 hours</h3>
+          <div class="chart-box"><canvas id="chart-rain-hourly" role="img" aria-label="Bar chart of rain probability over the next 24 hours"></canvas></div>
+        </div>
+        <div class="card p-4 lg:col-span-2">
+          <h3 class="chart-title" data-i18n="charts.temperature7">High and low temperature — 7 days</h3>
+          <div class="chart-box chart-box-tall"><canvas id="chart-temp-daily" role="img" aria-label="Line chart of daily high and low temperatures for seven days"></canvas></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="daily-section" class="mt-8" aria-labelledby="daily-heading">
+      <h2 id="daily-heading" class="section-title" data-i18n="section.daily">7-day forecast</h2>
+      <div id="daily-list" class="card divide-y" style="border-color: var(--border)"></div>
+    </section>
+
+    <section class="mt-8" aria-labelledby="summary-heading">
+      <h2 id="summary-heading" class="section-title" data-i18n="section.summary">Weekly summary</h2>
+      <div id="weekly-summary" class="card p-5 text-[15px] leading-relaxed"></div>
+    </section>
+
+    <div class="grid gap-4 lg:grid-cols-2 mt-8">
+      <section id="farmer-section" aria-labelledby="farmer-heading">
+        <h2 id="farmer-heading" class="section-title" data-i18n="section.farmer">Farmer forecast</h2>
+        <div id="farmer-content" class="card p-5"></div>
+      </section>
+
+      <section aria-labelledby="clothing-heading">
+        <h2 id="clothing-heading" class="section-title" data-i18n="section.clothing">What should I wear?</h2>
+        <div id="clothing-content" class="card p-5"></div>
+      </section>
+    </div>
+
+    <section class="mt-8" aria-labelledby="astro-heading">
+      <h2 id="astro-heading" class="section-title" data-i18n="section.astronomy">Sun</h2>
+      <div id="astro-content" class="card p-5"></div>
+    </section>
+
+    <section id="map-section" class="mt-8" aria-labelledby="map-heading">
+      <h2 id="map-heading" class="section-title" data-i18n="section.map">Where is it raining?</h2>
+      <div class="card overflow-hidden">
+        <div id="map-layer-buttons" class="map-layers" role="group" aria-label="Map layers">
+          <button type="button" class="layer-btn is-active" data-map-layer="rain" data-i18n="map.rain">Rain</button>
+          <button type="button" class="layer-btn" data-map-layer="clouds" data-i18n="map.clouds">Clouds</button>
+          <button type="button" class="layer-btn" data-map-layer="wind" data-i18n="map.wind">Wind</button>
+          <button type="button" class="layer-btn" data-map-layer="temp" data-i18n="map.temperature">Temperature</button>
+          <button type="button" class="layer-btn" data-map-layer="pressure" data-i18n="map.pressure">Pressure</button>
+          <button type="button" class="layer-btn" data-map-layer="none" data-i18n="map.none">None</button>
+        </div>
+        <div id="weather-map" class="weather-map" role="application" aria-label="Interactive weather map"></div>
+        <p id="map-status" class="text-xs text-muted px-4 py-2 border-t" style="border-color: var(--border)"></p>
+      </div>
+    </section>
+
+    <div class="grid gap-4 lg:grid-cols-2 mt-8">
+      <section aria-labelledby="fav-heading">
+        <h2 id="fav-heading" class="section-title" data-i18n="section.favorites">Favourite locations</h2>
+        <div id="favorites-list" class="card p-4"></div>
+      </section>
+      <section aria-labelledby="recent-heading">
+        <div class="flex items-center justify-between mb-3">
+          <h2 id="recent-heading" class="section-title mb-0" data-i18n="section.recents">Recent searches</h2>
+          <button type="button" id="clear-recents-btn" class="btn btn-ghost btn-xs" data-i18n="search.clearRecent">Clear</button>
+        </div>
+        <div id="recents-list" class="card p-4"></div>
+      </section>
+    </div>
+
+    <section id="export-section" class="mt-8" aria-labelledby="export-heading">
+      <h2 id="export-heading" class="section-title" data-i18n="section.export">Export weather data</h2>
+      <div class="card p-5">
+        <p class="text-sm text-muted mb-4" data-i18n="export.description">Download the current forecast for this location. Files are generated entirely in your browser.</p>
+        <div class="flex flex-wrap gap-2">
+          <button type="button" id="export-excel" class="btn btn-primary">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"></path><path d="M14 2v6h6M9 13l6 6M15 13l-6 6"></path></svg>
+            <span data-i18n="export.excel">Excel (.xlsx)</span>
+          </button>
+          <button type="button" id="export-csv" class="btn btn-secondary">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"></path><path d="M14 2v6h6M8 13h8M8 17h5"></path></svg>
+            <span data-i18n="export.csv">CSV</span>
+          </button>
+          <button type="button" id="export-pdf" class="btn btn-secondary">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"></path><path d="M14 2v6h6M9 15h6M9 18h4"></path></svg>
+            <span data-i18n="export.pdf">PDF report</span>
+          </button>
+        </div>
+      </div>
+    </section>
+
+  </div>
+</main>
+
+<footer id="footer" class="site-footer">
+  <div class="mx-auto max-w-content px-3 sm:px-5 py-6 text-xs text-muted">
+    <p class="mb-1">
+      <span data-i18n="footer.dataBy">Weather data by</span>
+      <a href="https://open-meteo.com/" target="_blank" rel="noopener noreferrer">Open-Meteo</a>,
+      <a href="https://www.weatherapi.com/" target="_blank" rel="noopener noreferrer">WeatherAPI.com</a>,
+      <a href="https://openweathermap.org/" target="_blank" rel="noopener noreferrer">OpenWeatherMap</a>.
+    </p>
+    <p class="mb-1">
+      <span data-i18n="footer.mapBy">Maps by</span>
+      <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a>
+      <span data-i18n="footer.and">and</span>
+      <a href="https://leafletjs.com/" target="_blank" rel="noopener noreferrer">Leaflet</a>.
+    </p>
+    <p data-i18n="footer.advisory">Forecasts are advisory. Always check official sources before making critical decisions.</p>
+    <p class="mt-2 opacity-70">Weather Forecast PWA · <span id="app-version">v1.0.0</span></p>
+  </div>
+</footer>
+
+<nav id="bottom-nav" class="bottom-nav md:hidden" aria-label="Primary">
+  <a href="#top" class="bottom-nav-link">
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1Z"></path></svg>
+    <span data-i18n="nav.home">Home</span>
+  </a>
+  <a href="#hourly-section" class="bottom-nav-link">
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg>
+    <span data-i18n="nav.hourly">Hourly</span>
+  </a>
+  <a href="#daily-section" class="bottom-nav-link">
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"></rect><path d="M8 3v4M16 3v4M3 11h18"></path></svg>
+    <span data-i18n="nav.forecast">7-Day</span>
+  </a>
+  <a href="#map-section" class="bottom-nav-link">
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m9 3 6 3 6-3v15l-6 3-6-3-6 3V6Z"></path><path d="M9 3v15M15 6v15"></path></svg>
+    <span data-i18n="nav.map">Map</span>
+  </a>
+  <a href="#export-section" class="bottom-nav-link">
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"></path></svg>
+    <span data-i18n="nav.more">Export</span>
+  </a>
+</nav>
+
+<div id="toast-container" class="toast-container" role="region" aria-live="polite" aria-label="Notifications"></div>
+
+<script type="module" src="./assets/js/app.js"></script>
+</body>
+</html>
